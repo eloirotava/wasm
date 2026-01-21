@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N-Body Physics Benchmark</title>
+    <style>
+        body {
+            background-color: #111;
+            color: #0f0; /* Verde terminal */
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        button {
+            background-color: #222;
+            color: #fff;
+            border: 1px solid #0f0;
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background-color: #0f0;
+            color: #000;
+        }
+        #output {
+            margin-top: 30px;
+            white-space: pre-wrap;
+            border: 1px solid #333;
+            padding: 20px;
+            width: 90%;
+            max-width: 600px;
+            min-height: 150px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>⚛️ N-Body Physics Simulator</h1>
+    <p>WebGPU Compute Shader • 16k Particles • O(N²)</p>
+
+    <button id="runBtn">RODAR SIMULAÇÃO</button>
+
+    <div id="output">Aguardando comando...</div>
+
+    <script type="module">
+        import init, { run_physics_bench } from './pkg-physics/gpu_physics.js';
+
+        async function main() {
+            await init();
+            
+            const btn = document.getElementById('runBtn');
+            const out = document.getElementById('output');
+
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                btn.innerText = "CALCULANDO (AGUARDE)...";
+                out.innerText = "Iniciando GPU...\nCarregando Kernels...\nIsso pode levar alguns instantes no PC, mas voa no Celular.";
+
+                // Pequeno delay para o navegador renderizar o texto acima antes de travar
+                setTimeout(async () => {
+                    try {
+                        const result = await run_physics_bench();
+                        out.innerText = result;
+                    } catch (e) {
+                        out.innerText = "ERRO: " + e;
+                        console.error(e);
+                    }
+                    btn.disabled = false;
+                    btn.innerText = "RODAR NOVAMENTE";
+                }, 100);
+            });
+        }
+
+        main();
+    </script>
+</body>
+</html>

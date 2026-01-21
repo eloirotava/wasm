@@ -1,0 +1,8 @@
+[package]
+name = "cpu-nbody"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Rayon para quando você quiser ver a velocidade com todos os núcleos
+rayon = "1.8"
