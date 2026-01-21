@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rust Bench: WASM vs Native</title>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; }
+        .box { border: 1px solid #ccc; padding: 1rem; margin: 1rem 0; }
+        button { padding: 10px 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Batalha: WASM vs Nativo (ELF)</h1>
+    
+    <div class="box">
+        <label>Tamanho da Matriz (N x N): </label>
+        <input type="number" id="size" value="400">
+        <p><i>Nota: 400 ~segundos, 1000+ ~minutos (O(n³))</i></p>
+    </div>
+
+    <div class="box">
+        <h3>WebAssembly (Roda no seu Browser)</h3>
+        <button onclick="runWasm()">Rodar WASM</button>
+        <div id="wasm-result">...</div>
+    </div>
+
+    <div class="box">
+        <h3>Nativo (Roda no Servidor/Codespaces)</h3>
+        <button onclick="runNative()">Rodar ELF</button>
+        <div id="native-result">...</div>
+    </div>
+
+    <script type="module">
+        import init, { run_wasm_bench } from './pkg/wasm_frontend.js';
+
+        async function main() {
+            await init();
+            window.runWasm = () => {
+                const size = parseInt(document.getElementById('size').value);
+                document.getElementById('wasm-result').innerText = "Calculando...";
+                
+                // Pequeno timeout para renderizar o texto "Calculando" antes de travar a UI
+                setTimeout(() => {
+                    const start = performance.now();
+                    const msg = run_wasm_bench(size);
+                    const end = performance.now();
+                    document.getElementById('wasm-result').innerText = 
+                        `Resultado: ${msg} \nTempo JS (Total): ${((end - start)/1000).toFixed(2)}s`;
+                }, 10);
+            };
+        }
+        main();
+
+        window.runNative = async () => {
+            const size = parseInt(document.getElementById('size').value);
+            document.getElementById('native-result').innerText = "Enviando requisição...";
+            
+            const start = performance.now();
+            const res = await fetch(`/api/native/${size}`);
+            const text = await res.text();
+            const end = performance.now();
+            
+            document.getElementById('native-result').innerText = 
+                `Server Respondeu: ${text} \nLatência Total: ${((end - start)/1000).toFixed(2)}s`;
+        }
+    </script>
+</body>
+</html>
