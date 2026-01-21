@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU Benchmark Standalone</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 2rem; background: #f0f2f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        button { 
+            background-color: #e63946; color: white; border: none; padding: 12px 24px; 
+            font-size: 16px; border-radius: 4px; cursor: pointer; transition: background 0.3s;
+            width: 100%; margin-top: 10px;
+        }
+        button:hover { background-color: #d62828; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #log { 
+            margin-top: 20px; padding: 10px; background: #1e1e1e; color: #00ff00; 
+            font-family: monospace; border-radius: 4px; white-space: pre-wrap; min-height: 100px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Teste WebGPU (Standalone)</h1>
+        <p>Este teste roda uma multiplicação de matrizes 2048x2048 diretamente na sua Placa de Vídeo.</p>
+        
+        <button id="btn-run" onclick="runBenchmark()">🚀 Rodar Benchmark GPU</button>
+        <div id="log">Aguardando início...</div>
+    </div>
+
+    <script type="module">
+        // Importa o WASM gerado. Note o caminho relativo para sua pasta pkg-gpu
+        import init, { run_gpu_bench } from './pkg-gpu/gpu_bench.js';
+
+        window.runBenchmark = async () => {
+            const btn = document.getElementById('btn-run');
+            const log = document.getElementById('log');
+            
+            btn.disabled = true;
+            log.innerText = "Inicializando WebAssembly e WebGPU...\n(Verifique permissões se for a primeira vez)";
+
+            try {
+                // 1. Inicializa o módulo WASM
+                await init();
+
+                log.innerText += "\n\nProcessando na GPU (Isso deve ser rápido!)...";
+
+                // Dá um tempinho para a UI atualizar antes de travar a thread principal (se fosse síncrono)
+                setTimeout(async () => {
+                    try {
+                        // 2. Chama a função Rust
+                        const result = await run_gpu_bench();
+                        log.innerText = "✅ SUCESSO:\n" + result;
+                    } catch (err) {
+                        log.innerText = "❌ ERRO NA EXECUÇÃO:\n" + err;
+                        console.error(err);
+                    } finally {
+                        btn.disabled = false;
+                    }
+                }, 50);
+
+            } catch (err) {
+                log.innerText = "❌ ERRO FATAL:\nOcorreu um erro ao carregar o WebGPU.\n" + 
+                                "Certifique-se que seu navegador suporta WebGPU.\n\nDetalhe: " + err;
+                btn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>
