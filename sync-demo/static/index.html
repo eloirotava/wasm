@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rust Real-Time Cursors</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1e1e1e; color: white; font-family: sans-serif; cursor: none; /* Esconde o mouse nativo pra ficar mais imersivo */ }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+        .badge { background: #333; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="badge" id="status">🔴 Conectando...</div>
+        <div class="badge" style="margin-top:5px">Meus coords: <span id="coords">0, 0</span></div>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const coordsDiv = document.getElementById('coords');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // --- ESTADO DO MUNDO ---
+        
+        // O objeto que estamos trabalhando juntos (ex: uma peça)
+        let sharedObj = { x: window.innerWidth/2, y: window.innerHeight/2, r: 40 };
+        
+        // MEU mouse local
+        let myMouse = { x: 0, y: 0, id: 'eu' };
+
+        // Mouses dos AMIGOS (Mapa: ID -> {x, y, color})
+        let remoteCursors = {};
+
+        // --- WEBSOCKET ---
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+
+        socket.onopen = () => {
+            statusDiv.innerText = "🟢 Online - Mova o mouse!";
+            statusDiv.style.color = "#4f4";
+        };
+
+        socket.onmessage = (event) => {
+            const payload = JSON.parse(event.data);
+            const userId = payload.id;
+            const data = payload.data;
+
+            // Se for movimento de mouse/objeto
+            if (data.type === 'move') {
+                // Salva/Atualiza o cursor do amigo
+                remoteCursors[userId] = {
+                    x: data.x,
+                    y: data.y,
+                    color: stringToColor(userId), // Cor única baseada no ID
+                    lastUpdate: Date.now()
+                };
+
+                // Se ele estiver arrastando o objeto, atualiza o objeto também
+                if (data.dragging) {
+                    sharedObj.x = data.x;
+                    sharedObj.y = data.y;
+                }
+            }
+        };
+
+        // --- LÓGICA DE INTERAÇÃO ---
+        let isDragging = false;
+
+        function sendUpdate() {
+            if (socket.readyState === WebSocket.OPEN) {
+                const msg = JSON.stringify({
+                    type: 'move',
+                    x: myMouse.x,
+                    y: myMouse.y,
+                    dragging: isDragging
+                });
+                socket.send(msg);
+            }
+        }
+
+        // Eventos de Mouse/Touch
+        const updatePos = (x, y) => {
+            myMouse.x = x;
+            myMouse.y = y;
+            coordsDiv.innerText = `${x.toFixed(0)}, ${y.toFixed(0)}`;
+            
+            if (isDragging) {
+                sharedObj.x = x;
+                sharedObj.y = y;
+            }
+            sendUpdate();
+        };
+
+        canvas.addEventListener('mousemove', e => updatePos(e.clientX, e.clientY));
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            updatePos(e.touches[0].clientX, e.touches[0].clientY);
+        }, {passive: false});
+
+        // Agarrar objeto
+        const checkGrab = (x, y) => {
+            const dist = Math.hypot(x - sharedObj.x, y - sharedObj.y);
+            if (dist < sharedObj.r) isDragging = true;
+        };
+        
+        canvas.addEventListener('mousedown', e => checkGrab(e.clientX, e.clientY));
+        canvas.addEventListener('touchstart', e => checkGrab(e.touches[0].clientX, e.touches[0].clientY), {passive: false});
+        
+        const endGrab = () => isDragging = false;
+        window.addEventListener('mouseup', endGrab);
+        window.addEventListener('touchend', endGrab);
+
+        // --- RENDERIZAÇÃO (LOOP DE JOGO) ---
+        function draw() {
+            // Limpa tela
+            ctx.fillStyle = '#1e1e1e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Desenha o Objeto Compartilhado (A Peça)
+            ctx.beginPath();
+            ctx.arc(sharedObj.x, sharedObj.y, sharedObj.r, 0, Math.PI * 2);
+            ctx.fillStyle = isDragging ? '#fff' : '#33ccff';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 2. Desenha os CURSORES REMOTOS (Os Colegas)
+            const now = Date.now();
+            for (const [id, cursor] of Object.entries(remoteCursors)) {
+                // Remove cursores velhos (mais de 10s sem mexer)
+                if (now - cursor.lastUpdate > 10000) {
+                    delete remoteCursors[id];
+                    continue;
+                }
+                drawCursor(cursor.x, cursor.y, cursor.color, id.substring(0,4));
+            }
+
+            // 3. Desenha o MEU mouse
+            drawCursor(myMouse.x, myMouse.y, '#ffffff', 'EU');
+
+            requestAnimationFrame(draw);
+        }
+
+        // Função para desenhar a setinha do mouse
+        function drawCursor(x, y, color, label) {
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Seta
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(15, 15);
+            ctx.lineTo(5, 15);
+            ctx.lineTo(0, 22);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Nome/Label
+            ctx.fillStyle = color;
+            ctx.font = '12px monospace';
+            ctx.fillText(label, 10, -5);
+            
+            ctx.restore();
+        }
+
+        // Utilitário: Gera uma cor consistente baseada no ID (Hash)
+        function stringToColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+            return '#' + "00000".substring(0, 6 - c.length) + c;
+        }
+
+        draw(); // Inicia o loop
+    </script>
+</body>
+</html>
