@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"] # Importante para WASM
+crate-type = ["cdylib"]
 
 [dependencies]
-wgpu = "0.19"
+# CORREÇÃO: A versão é 23.0 (sem o zero na frente)
+wgpu = "23.0" 
 wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4" # GPU é async, precisamos disso no browser
+wasm-bindgen-futures = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
 web-sys = { version = "0.3", features = ["console", "Window", "Performance"] }
 futures = "0.3"

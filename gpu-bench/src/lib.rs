@@ -1,8 +1,7 @@
 use wasm_bindgen::prelude::*;
 use wgpu::util::DeviceExt;
 
-// Mantendo 1024 para segurança
-const N: u32 = 1024;
+const N: u32 = 4096;
 
 const SHADER_CODE: &str = r#"
 @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
@@ -40,9 +39,9 @@ fn log(s: &str) {
 pub async fn run_gpu_bench() -> String {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     
-    log("=== Iniciando GPU Benchmark (WebGPU - Modo Seguro) ===");
+    log("=== Iniciando GPU Benchmark (Staging Fix) ===");
 
-    let instance = wgpu::Instance::default();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
     
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default())
         .await
@@ -51,13 +50,7 @@ pub async fn run_gpu_bench() -> String {
     let info = adapter.get_info();
     log(&format!("Hardware Detectado: {} ({:?})", info.name, info.backend));
 
-    // --- CORREÇÃO DEFINITIVA ---
-    // Usamos 'downlevel_defaults'. Isso define limites compatíveis com WebGL2.
-    // Isso evita o erro 'maxInterStageShaderComponents' porque usa padrões seguros.
-    // Como nossa matriz usa apenas 4MB (e o limite é 128MB), isso sobra.
-    let mut required_limits = wgpu::Limits::downlevel_defaults();
-    
-    // Pequeno ajuste: garantimos que o tamanho do buffer de storage seja suficiente (padrão já é 128MB, mas reforçando)
+    let mut required_limits = wgpu::Limits::downlevel_webgl2_defaults();
     required_limits.max_storage_buffer_binding_size = 128 * 1024 * 1024; 
 
     let (device, queue) = adapter.request_device(
@@ -65,16 +58,16 @@ pub async fn run_gpu_bench() -> String {
             label: None,
             required_features: wgpu::Features::empty(),
             required_limits, 
+            memory_hints: wgpu::MemoryHints::Performance,
         },
         None,
     ).await.expect("ERRO: Falha ao criar dispositivo lógico (Device).");
-    // ---------------------------
 
     let size_bytes = (N * N * 4) as u64;
     let matrix_a_host = vec![1.5f32; (N * N) as usize];
     let matrix_b_host = vec![2.5f32; (N * N) as usize];
 
-    log(&format!("Alocando {:.2} MB na VRAM...", (size_bytes as f64 * 3.0)/1024.0/1024.0));
+    log(&format!("Alocando buffers ({:.2} MB)...", (size_bytes as f64 * 3.0)/1024.0/1024.0));
 
     let buffer_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Matrix A"), contents: bytemuck::cast_slice(&matrix_a_host), usage: wgpu::BufferUsages::STORAGE,
@@ -83,10 +76,23 @@ pub async fn run_gpu_bench() -> String {
         label: Some("Matrix B"), contents: bytemuck::cast_slice(&matrix_b_host), usage: wgpu::BufferUsages::STORAGE,
     });
     
-    let buffer_result = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Result"),
+    // --- CORREÇÃO: ARQUITETURA DE STAGING ---
+    
+    // 1. Buffer de GPU (Rápido, Privado da GPU)
+    // O shader escreve aqui. Nós COPIAMOS dele (COPY_SRC).
+    let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Storage Buffer (VRAM)"),
         size: size_bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_READ,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    // 2. Buffer de Staging (Lento, Acessível pela CPU)
+    // Nós lemos aqui (MAP_READ). Nós COPIAMOS para ele (COPY_DST).
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Staging Buffer (RAM)"),
+        size: size_bytes,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
@@ -95,7 +101,12 @@ pub async fn run_gpu_bench() -> String {
     });
 
     let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("Pipeline"), layout: None, module: &shader, entry_point: "main",
+        label: Some("Pipeline"), 
+        layout: None, 
+        module: &shader, 
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
     });
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -104,26 +115,33 @@ pub async fn run_gpu_bench() -> String {
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: buffer_a.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: buffer_b.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: buffer_result.as_entire_binding() },
+            // IMPORTANTE: O Shader liga-se ao storage_buffer (VRAM), não ao staging
+            wgpu::BindGroupEntry { binding: 2, resource: storage_buffer.as_entire_binding() },
         ],
     });
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     {
-        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Compute Pass"), timestamp_writes: None });
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
         cpass.dispatch_workgroups(N / 16, N / 16, 1);
     }
+    
+    // 3. COMANDO DE CÓPIA: GPU -> Staging
+    // Isso acontece na GPU, ultra rápido.
+    encoder.copy_buffer_to_buffer(&storage_buffer, 0, &staging_buffer, 0, size_bytes);
+
     queue.submit(Some(encoder.finish()));
 
-    log("Comando enviado para GPU...");
+    log("Comando enviado para GPU... Aguardando hardware.");
     
     let window = web_sys::window().expect("window");
     let performance = window.performance().expect("performance");
     let start = performance.now();
 
-    let buffer_slice = buffer_result.slice(..);
+    // 4. Mapear o buffer de STAGING (não o de storage)
+    let buffer_slice = staging_buffer.slice(..);
     let (tx, rx) = futures::channel::oneshot::channel();
     
     buffer_slice.map_async(wgpu::MapMode::Read, move |v| {
@@ -133,7 +151,7 @@ pub async fn run_gpu_bench() -> String {
     device.poll(wgpu::Maintain::Wait);
     
     match rx.await {
-        Ok(Ok(())) => log("Memória mapeada com sucesso!"),
+        Ok(Ok(())) => log("Dados transferidos para CPU!"),
         _ => return "ERRO FATAL: Ocorreu um erro ao ler a memória da GPU".to_string(),
     }
 
@@ -146,10 +164,11 @@ pub async fn run_gpu_bench() -> String {
         floats[0]
     };
     
-    buffer_result.unmap();
+    // Libera o staging para uso futuro
+    staging_buffer.unmap();
 
     format!(
-        "✅ SUCESSO!\nHardware: {}\nTempo GPU: {:.4}s\nMatriz: {}x{}\nCheck: {:.2}", 
+        "✅ SUCESSO!\nHardware: {}\nTempo Total (Calc + Download): {:.4}s\nMatriz: {}x{}\nCheck: {:.2}", 
         info.name, duration, N, N, check_val
     )
 }
