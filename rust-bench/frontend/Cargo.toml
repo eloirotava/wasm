@@ -1,0 +1,13 @@
+[package]
+name = "wasm-frontend"  # O nome que você definiu
+version = "0.1.0"
+edition = "2021"
+
+# Adicione/Corrija esta seção [lib]
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"      # <--- ADICIONE ESTA LINHA PARA FORÇAR O CAMINHO
+
+[dependencies]
+wasm-bindgen = "0.2"
+core-algo = { path = "../core-algo" }
