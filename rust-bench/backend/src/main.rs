@@ -7,8 +7,9 @@ async fn run_native(path: web::Path<usize>) -> impl Responder {
     let size = path.into_inner();
     println!("Iniciando Nativo (ELF) com tamanho {}...", size);
     
-    // web::block para não travar a thread async do servidor
-    let result = web::block(move || heavy_computation(size)).await.unwrap();
+    // CORREÇÃO: Removi o .unwrap() do final desta linha
+    // Agora 'result' será um Result<String, BlockingError>
+    let result = web::block(move || heavy_computation(size)).await;
     
     match result {
         Ok(msg) => HttpResponse::Ok().body(msg),
